@@ -104,6 +104,13 @@ def LLVMCPUSelectLoweringStrategy :
       "mlir::iree_compiler::createLLVMCPUSelectLoweringStrategyPass()";
 }
 
+def LLVMCPUStackAllocationElimination : InterfacePass<"iree-llvmcpu-stack-elimination", "ModuleOp"> {
+  let summary =
+      "Convert all stack allocations in the module to workgroup memory allocations";
+  let constructor =
+      "mlir::iree_compiler::createLLVMCPUStackAllocationEliminationPass()";
+}
+
 def LLVMCPUSplitReduction : InterfacePass<"iree-llvmcpu-split-reduction", "mlir::FunctionOpInterface"> {
   let summary = "Pass to splitReduce linalg operations.";
   let constructor = "mlir::iree_compiler::createLLVMCPUSplitReductionPass()";

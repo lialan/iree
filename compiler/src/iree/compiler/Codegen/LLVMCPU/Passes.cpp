@@ -727,6 +727,7 @@ static void addLowerToLLVMPasses(OpPassManager &modulePassManager,
       .addPass(createIREEExpandStridedMetadataPass)
       .addPass(createCleanupBufferAllocViewPass)
       // Checking stack allocation before converting to CF dialect is easier.
+      .addPass(createLLVMCPUStackAllocationEliminationPass)
       .addPass([&]() {
         return createLLVMCPUCheckIRBeforeLLVMConversionPass(
             clFailOnOutOfBoundsStackAllocation);

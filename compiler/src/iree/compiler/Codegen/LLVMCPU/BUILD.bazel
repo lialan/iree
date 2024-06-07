@@ -63,6 +63,7 @@ iree_compiler_cc_library(
         "LLVMCPUMmt4dVectorLowering.cpp",
         "LLVMCPUPeel.cpp",
         "LLVMCPUSelectLoweringStrategy.cpp",
+        "LLVMCPUStackAllocationElimination.cpp",
         "LLVMCPUSplitReduction.cpp",
         "LLVMCPUSynchronizeSymbolVisibility.cpp",
         "LLVMCPUTile.cpp",

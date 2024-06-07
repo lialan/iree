@@ -13,6 +13,7 @@
 #define IREE_COMPILER_CODEGEN_LLVMCPU_PASSES_H_
 
 #include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenAttrs.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 
 namespace mlir::iree_compiler {
@@ -55,6 +56,10 @@ createLLVMCPUMmt4dVectorLoweringPass(
 /// Pass to perform peeling on non-distributed loops.
 std::unique_ptr<InterfacePass<mlir::FunctionOpInterface>>
 createLLVMCPUPeelPass();
+
+/// Moves all stack allocations to workgroup memory space
+std::unique_ptr<OperationPass<ModuleOp>>
+createLLVMCPUStackAllocationEliminationPass();
 
 /// Pass to perform SplitReduction transformations of `LinalgOp`s.
 std::unique_ptr<InterfacePass<mlir::FunctionOpInterface>>
