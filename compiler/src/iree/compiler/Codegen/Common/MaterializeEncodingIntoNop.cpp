@@ -45,6 +45,8 @@ struct MaterializeEncodingIntoNopPass
     MaterializeEncodingTypeConverter typeConverter(materializeEncodingFn);
     MaterializeEncodingConversionTarget target(*context);
     populateMaterializeEncodingIntoPackUnPackPatterns(
+        materializeEncodingPattern, typeConverter, materializeEncodingValueFn);
+    populateIREEMaterializeEncodingIntoPackUnPackPatterns(
         materializeEncodingPattern, target, typeConverter,
         materializeEncodingValueFn);
 
