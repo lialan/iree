@@ -6,6 +6,7 @@
 
 #include "iree/compiler/Codegen/Common/EncodingUtils.h"
 #include "iree/compiler/Codegen/Common/GPU/Passes.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/MemRef/Transforms/Transforms.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -200,18 +201,18 @@ struct GPUSetEncodingOpLoweringConversion
 
     // Check that the dimensions of the matrix can be divided by the tile shape,
     // if not then bail out.
-    auto sourceType = encodingOp.getSourceType().getShape();
-    assert(sourceType.size() == 2);
-    if (sourceType[0] % innerTiles[0] == 0 ||
-        sourceType[1] % innerTiles[1] == 0) {
+    auto sourceShape = encodingOp.getSourceType().getShape();
+    assert(sourceShape.size() == 2);
+    if (sourceShape[0] % innerTiles[0] == 0 ||
+        sourceShape[1] % innerTiles[1] == 0) {
       return failure();
     }
 
     // Create expand_shape
     llvm::SmallVector<int64_t> expandShapeShape;
     auto [iT1, iT2] = *intrinsicVectorShape;
-    auto oT1 = sourceType[0] / iT1;
-    auto oT2 = sourceType[1] / iT2;
+    auto oT1 = sourceShape[0] / iT1;
+    auto oT2 = sourceShape[1] / iT2;
     expandShapeShape = {oT1, iT1, oT2, iT2};
     assert(expandShapeShape.size() == 4);
     RankedTensorType expandShapeType =
@@ -223,7 +224,7 @@ struct GPUSetEncodingOpLoweringConversion
     // create linalg.transpose
     auto emptyTensor = rewriter.create<tensor::EmptyOp>(
         loc, expandShapeShape, encodingOp.getSourceType().getElementType());
-    [[maybe_unused]] auto transposeOp = rewriter.create<linalg::TransposeOp>(
+    auto transposeOp = rewriter.create<linalg::TransposeOp>(
         loc, expandShapeOp, emptyTensor, getTransposePermutation(roleIdx));
 
     // TODO(hanchung): We want to make the shape consistent, so we need to
@@ -236,8 +237,27 @@ struct GPUSetEncodingOpLoweringConversion
     //    LHS: 64 -> 16x4 (innerTiles[0]xinnerTiles[1])
     //    ACC: 256 -> 16x16 (innerTiles[0]xinnerTiles[1])
 
-    // TODO(lialan): Replace the op with the tensor.expand_shape op.
-    rewriter.replaceOp(encodingOp, packOp->getResult());
+    // now revert the shape back to the original shape, so we can do eager tests.
+    //SmallVector<int64_t> targetShape(sourceShape);
+    SmallVector<ReassociationIndices> reassoc;
+    reassoc.push_back(ReassociationIndices{0, 1});
+    reassoc.push_back(ReassociationIndices{2, 3});
+    /*
+    for (int i = 0, e = targetShape.size(); i < e; i++) {
+      reassoc.push_back(ReassociationIndices{i});
+    }
+    */
+    //reassoc.back().push_back(targetShape.size());
+
+    RankedTensorType revertShapeType =
+        RankedTensorType::Builder(encodingOp.getResultType())
+            .setShape(targetShape);
+
+    auto revertShape = rewriter.create<tensor::CollapseShapeOp>(
+        loc, revertShapeType, transposeOp->getResult(0),
+        ArrayRef<ReassociationIndices>(reassoc));
+
+    rewriter.replaceOp(encodingOp, revertShape);
     return success();
   }
 };
