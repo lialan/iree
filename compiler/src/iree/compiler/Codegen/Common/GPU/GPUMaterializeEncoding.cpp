@@ -54,11 +54,23 @@ ArrayRef<int64_t> getTransposePermutation(int64_t roleIdx) {
   case 1: // B
     // OuterTileX x InnerTileX x OuterTileY x InnerTileY
     // -> OuterTileY x OuterTileX x InnerTileY x InnerTileX
-    return {2, 0, 3, 1};
+    return ArrayRef<int64_t>{2, 0, 3, 1};
   case 2: // C
     // ACC:
     // OuterTileX x InnerTileX x OuterTileY x InnerTileY
     // -> OuterTileX x OuterTileY x InnerTileX x InnerTileY
+    return ArrayRef<int64_t>{0, 2, 1, 3};
+  default:
+    llvm_unreachable("unexpected roleIdx");
+  }
+}
+
+ArrayRef<int64_t> getReverseTransposePermutation(int64_t roleIdx) {
+  switch (roleIdx) {
+  case 0: // A
+  case 1: // B
+    return {1, 2, 0, 3};
+  case 2: // C
     return {0, 2, 1, 3};
   default:
     llvm_unreachable("unexpected roleIdx");
@@ -137,6 +149,7 @@ struct GPUSetEncodingOpLoweringConversion
         getTypeConverter());
     MaterializeEncodingFn materializeEncodingFn =
         converter->getMaterializeEncodingFn();
+    /*
     auto packOp = lowerSetEncodingOpToPackOp(
         rewriter, encodingOp, adaptor.getSource(), materializeEncodingFn,
         this->materializeEncodingValueFn);
@@ -151,6 +164,7 @@ struct GPUSetEncodingOpLoweringConversion
       rewriter.replaceOp(encodingOp, result);
       return success();
     }
+    */
 
     FailureOr<MaterializeEncodingInfo> maybeEncodingInfo =
         materializeEncodingFn(encodingOp.getResultType());
@@ -219,13 +233,20 @@ struct GPUSetEncodingOpLoweringConversion
         RankedTensorType::Builder(encodingOp.getSourceType())
             .setShape(expandShapeShape);
     Value expandShapeOp = rewriter.create<tensor::ExpandShapeOp>(
-        loc, expandShapeType, packOp->getResult());
+        loc, expandShapeType, encodingOp.getResult());
 
     // create linalg.transpose
+    ArrayRef<int64_t> transpose_permutation = ArrayRef<int64_t>({2, 0 ,3, 1});
+    // transpose expandShapeShape
+    SmallVector<int64_t> transposeResultDims;
+    for (int i = 0; i < transpose_permutation.size(); i++) {
+      transposeResultDims.push_back(expandShapeShape[transpose_permutation[i]]);
+    }
+
     auto emptyTensor = rewriter.create<tensor::EmptyOp>(
-        loc, expandShapeShape, encodingOp.getSourceType().getElementType());
+        loc, transposeResultDims, encodingOp.getSourceType().getElementType());
     auto transposeOp = rewriter.create<linalg::TransposeOp>(
-        loc, expandShapeOp, emptyTensor, getTransposePermutation(roleIdx));
+        loc, expandShapeOp, emptyTensor, transpose_permutation);
 
     // TODO(hanchung): We want to make the shape consistent, so we need to
     // collpase and expand the shape. This is the shape we materialize for Flow
@@ -236,6 +257,13 @@ struct GPUSetEncodingOpLoweringConversion
     // 2. Create tensor.expand_shape to recover the shape (i.e., innerTiles).
     //    LHS: 64 -> 16x4 (innerTiles[0]xinnerTiles[1])
     //    ACC: 256 -> 16x16 (innerTiles[0]xinnerTiles[1])
+
+    ArrayRef<int64_t> reverse_transpose_permutation = ArrayRef<int64_t>({1, 2, 0, 3});
+    auto reverseEmptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, expandShapeShape, encodingOp.getSourceType().getElementType());
+    auto reverseTransposeOp = rewriter.create<linalg::TransposeOp>(
+        loc, transposeOp->getResult(0), reverseEmptyTensor,
+        reverse_transpose_permutation);
 
     // now revert the shape back to the original shape, so we can do eager tests.
     //SmallVector<int64_t> targetShape(sourceShape);
@@ -250,14 +278,13 @@ struct GPUSetEncodingOpLoweringConversion
     //reassoc.back().push_back(targetShape.size());
 
     RankedTensorType revertShapeType =
-        RankedTensorType::Builder(encodingOp.getResultType())
-            .setShape(targetShape);
+        RankedTensorType::Builder(encodingOp.getResultType());
 
-    auto revertShape = rewriter.create<tensor::CollapseShapeOp>(
-        loc, revertShapeType, transposeOp->getResult(0),
+    auto collapseShapeOp = rewriter.create<tensor::CollapseShapeOp>(
+        loc, revertShapeType, reverseTransposeOp->getResult(0),
         ArrayRef<ReassociationIndices>(reassoc));
 
-    rewriter.replaceOp(encodingOp, revertShape);
+    rewriter.replaceOp(encodingOp, collapseShapeOp);
     return success();
   }
 };
