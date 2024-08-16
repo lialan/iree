@@ -340,6 +340,153 @@ struct GPUSetEncodingOpLoweringConversion
   }
 };
 
+struct GPUUnsetEncodingOpLoweringConversion
+    : public OpMaterializeEncodingPattern<IREE::Encoding::UnsetEncodingOp> {
+  using OpMaterializeEncodingPattern<
+      IREE::Encoding::UnsetEncodingOp>::OpMaterializeEncodingPattern;
+
+  LogicalResult
+  matchAndRewrite(IREE::Encoding::UnsetEncodingOp encodingOp, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    /*
+    auto converter = static_cast<const MaterializeEncodingTypeConverter *>(
+        getTypeConverter());
+    auto packOp = lowerSetEncodingOpToPackOp(rewriter, encodingOp,
+                                             adaptor.getSource(), *converter,
+                                             this->materializeEncodingValueFn);
+    if (failed(packOp)) {
+      Value result = adaptor.getSource();
+      Type targetType =
+          getTypeConverter()->convertType(encodingOp.getResultType());
+      if (targetType != result.getType()) {
+        result = rewriter.create<tensor::CastOp>(encodingOp.getLoc(),
+                                                 targetType, result);
+      }
+      rewriter.replaceOp(encodingOp, result);
+      return success();
+    }
+
+    FailureOr<MaterializeEncodingInfo> maybeEncodingInfo =
+        converter->getEncodingInfo(encodingOp.getResultType());
+    if (failed(maybeEncodingInfo)) {
+      return rewriter.notifyMatchFailure(encodingOp,
+                                         "unhandled result encoding");
+    }
+    SmallVector<int64_t> innerTiles = maybeEncodingInfo->innerTileSizes;
+    SmallVector<int64_t> intrinsicVectorShape =
+        maybeEncodingInfo->innerTileShapes;
+
+    // TODO(hanchung): Add a util to the encoding attribute, so we don't need
+    // the map_to_vector method here.
+    auto encoding = IREE::Encoding::getEncodingAttr(encodingOp.getResultType());
+    int64_t roleIdx = encoding.getOperandIndex().getInt();
+    auto elemTypes = llvm::map_to_vector(
+        encoding.getElementTypes().getValue(),
+        [](Attribute a) { return cast<TypeAttr>(a).getValue(); });
+    auto loc = encodingOp.getLoc();
+
+    std::optional<TileMxNxK> intrinsicShape = getIntrinsicSize(elemTypes);
+    if (!intrinsicShape || intrinsicVectorShape.empty()) {
+      return failure();
+    }
+
+    SmallVector<int64_t> targetShape; // for unrolling
+    switch (roleIdx) {
+    case 0: // A
+      targetShape = {intrinsicShape->M, intrinsicShape->K};
+      break;
+    case 1: // B
+      targetShape = {intrinsicShape->N, intrinsicShape->K};
+      break;
+    case 2: // C
+      targetShape = {intrinsicShape->M, intrinsicShape->N};
+      break;
+    default:
+      return failure();
+    }
+
+    assert(innerTiles.size() == targetShape.size());
+    for (auto [packedShape, targetShape] :
+         llvm::zip_equal(innerTiles, targetShape)) {
+      // TODO(lialan): Relax the condition for unrolling when it is supported.
+      (void)packedShape;
+      (void)targetShape;
+      assert(packedShape == targetShape);
+    }
+
+    // Create expand_shape op to tile the innermost two dimensions.
+    auto sourceShape = packOp->getDestType().getShape();
+    assert(intrinsicVectorShape.size() == 2); // TODO: relax this
+    auto iT1 = intrinsicVectorShape[0];
+    auto iT2 = intrinsicVectorShape[1];
+    auto oT1 = sourceShape[2] / iT1;
+    auto oT2 = sourceShape[3] / iT2;
+    SmallVector<int64_t> expandShapeShape = {
+        sourceShape[0], sourceShape[1], oT1, iT1, oT2, iT2};
+    assert(expandShapeShape.size() == 6);
+    auto expandShapeType = RankedTensorType::get(
+        expandShapeShape, encodingOp.getSourceType().getElementType());
+
+    std::optional<SmallVector<ReassociationIndices>> reassociationMap =
+        getReassociationIndicesForReshape(packOp->getDestType(),
+                                          expandShapeType);
+    assert(reassociationMap.has_value());
+    auto expandShapeOp = rewriter.create<tensor::ExpandShapeOp>(
+        loc, expandShapeType, packOp->getResult(), *reassociationMap);
+
+    // create linalg.transpose on expandShapeShape
+    size_t origRank = encodingOp.getSourceType().getRank();
+
+    SmallVector<int64_t> transposePerm;
+    transposePerm.push_back(0);
+    transposePerm.push_back(1);
+    for (auto perm : maybeEncodingInfo->permutation) {
+      transposePerm.push_back(origRank + perm);
+    }
+    SmallVector<int64_t> transposeResultDims = expandShapeShape;
+    applyPermutationToVector(transposeResultDims, transposePerm);
+
+    auto emptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, transposeResultDims, encodingOp.getSourceType().getElementType());
+    auto transposeOp = rewriter.create<linalg::TransposeOp>(
+        loc, expandShapeOp, emptyTensor, transposePerm);
+
+    // We want to make the shape consistent, so we need to append it with a
+    // `collapse_shape` and a `expand_shape`, just to be conformant with how we
+    // materialize for Flow and HAL op.
+
+    // 1. collapse tiled dimensions into one dim
+    SmallVector<int64_t> collapsedShape = {sourceShape[0], sourceShape[1],
+                                           sourceShape[2] * sourceShape[3]};
+    auto revertShapeType = RankedTensorType::get(
+        collapsedShape, encodingOp.getSourceType().getElementType());
+
+    std::optional<SmallVector<ReassociationIndices>> collapseReassoc =
+        getReassociationIndicesForReshape(emptyTensor.getType(),
+                                          revertShapeType);
+    assert(collapseReassoc.has_value());
+
+    auto collapseShapeOp = rewriter.create<tensor::CollapseShapeOp>(
+        loc, revertShapeType, transposeOp->getResult(0), *collapseReassoc);
+
+    // 2. expand the collapsed shape to the shape intended by the encoding
+    assert(innerTiles.size() == 2); // TODO: relax this
+    auto expandTileShapeType = RankedTensorType::get(
+        {sourceShape[0], sourceShape[1], innerTiles[0], innerTiles[1]},
+        encodingOp.getSourceType().getElementType());
+    std::optional<SmallVector<ReassociationIndices>> tileAssoc =
+        getReassociationIndicesForReshape(collapseShapeOp.getType(),
+                                          expandTileShapeType);
+    assert(tileAssoc.has_value());
+    auto expandTileShapeOp = rewriter.create<tensor::ExpandShapeOp>(
+        loc, expandTileShapeType, collapseShapeOp, *tileAssoc);
+
+    rewriter.replaceOp(encodingOp, expandTileShapeOp);
+    */
+    return success();
+  }
+};
+
 } // namespace
 
 void GPUMaterializeDeviceEncodingPass::runOnOperation() {
@@ -357,7 +504,8 @@ void GPUMaterializeDeviceEncodingPass::runOnOperation() {
     populateIREEMaterializeEncodingIntoPackUnPackPatterns(
         patterns, target, typeConverter, materializeEncodingValueFn);
 
-    patterns.insert<GPUSetEncodingOpLoweringConversion>(
+    patterns.insert<GPUSetEncodingOpLoweringConversion,
+                    GPUUnsetEncodingOpLoweringConversion>(
         ctx, typeConverter, materializeEncodingValueFn);
 
     if (failed(applyPartialConversion(funcOp, target, std::move(patterns)))) {
