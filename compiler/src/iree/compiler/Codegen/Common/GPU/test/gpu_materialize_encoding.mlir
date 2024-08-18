@@ -100,10 +100,11 @@ func.func @set_encoding_RHS() {
 func.func @set_encoding_ACC() {
   %c0 = arith.constant 0 : index
   %0 = hal.interface.binding.subspan layout(#pipeline_layout) set(0) binding(0) alignment(64) offset(%c0) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<255x513xf32>>
-  %1 = hal.interface.binding.subspan layout(#pipeline_layout) set(0) binding(1) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<255x513xf32, #encoding>>
+  %1 = hal.interface.binding.subspan layout(#pipeline_layout) set(0) binding(1) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<255x513xf32>>
   %2 = flow.dispatch.tensor.load %0, offsets = [0, 0], sizes = [255, 513], strides = [1, 1] : !flow.dispatch.tensor<readonly:tensor<255x513xf32>> -> tensor<255x513xf32>
   %3 = iree_encoding.set_encoding %2 : tensor<255x513xf32> -> tensor<255x513xf32, #encoding>
-  flow.dispatch.tensor.store %3, %1, offsets = [0, 0], sizes = [255, 513], strides = [1, 1] : tensor<255x513xf32, #encoding> -> !flow.dispatch.tensor<writeonly:tensor<255x513xf32,  #encoding>>
+  %4 = iree_encoding.unset_encoding %3 : tensor<255x513xf32, #encoding> -> tensor<255x513xf32>
+  flow.dispatch.tensor.store %4, %1, offsets = [0, 0], sizes = [255, 513], strides = [1, 1] : tensor<255x513xf32> -> !flow.dispatch.tensor<writeonly:tensor<255x513xf32>>
   return
 }
 
@@ -128,28 +129,28 @@ func.func @set_encoding_ACC() {
 
 // -----
 
-#pipeline_layout = #hal.pipeline.layout<push_constants = 1, sets = [
-  #hal.descriptor_set.layout<0, bindings = [
-    #hal.descriptor_set.binding<0, storage_buffer>,
-    #hal.descriptor_set.binding<1, storage_buffer>
-  ]>
-]>
-#map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d3)>
-#map1 = affine_map<(d0, d1, d2, d3) -> (d0, d3, d2)>
-#map2 = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2)>
-#encoding_unset = #iree_encoding.encoding<operand_index = 2, op_type = matmul, element_types = [f32, f32, f32], original_type = tensor<128x80x320xf32>, user_indexing_maps = [#map, #map1, #map2], round_dims_to = array<i64: 16, 16, 16>>
-func.func @unset_encoding_128x80x320_batch_matmul_RESULT() attributes {
-   hal.executable.target = #hal.executable.target<"xyz", "xyz", {target_triple="x86_64-xyz-xyz", cpu_features="+avx,+avx2,+fma"}>
-} {
-  %c0 = arith.constant 0 : index
-  %0 = hal.interface.constant.load layout(#pipeline_layout) ordinal(0) : i32
-  %3 = arith.index_castui %0 : i32 to index
-  %6 = hal.interface.binding.subspan layout(#pipeline_layout) set(0) binding(1) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<128x80x320xf32>>
-  %9 = hal.interface.binding.subspan layout(#pipeline_layout) set(0) binding(0) alignment(64) offset(%3) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<128x80x320xf32, #encoding_unset>>
-  %10 = flow.dispatch.tensor.load %9, offsets = [0, 0, 0], sizes = [128, 80, 320], strides = [1, 1, 1]
-      : !flow.dispatch.tensor<readonly:tensor<128x80x320xf32, #encoding_unset>>
-      -> tensor<128x80x320xf32, #encoding_unset>
-  %11 = iree_encoding.unset_encoding %10 : tensor<128x80x320xf32, #encoding_unset> -> tensor<128x80x320xf32>
-  flow.dispatch.tensor.store %11, %6, offsets = [0, 0, 0], sizes = [128, 80, 320], strides = [1, 1, 1] : tensor<128x80x320xf32> -> !flow.dispatch.tensor<writeonly:tensor<128x80x320xf32>>
-  return
-}
+// #pipeline_layout = #hal.pipeline.layout<push_constants = 1, sets = [
+//   #hal.descriptor_set.layout<0, bindings = [
+//     #hal.descriptor_set.binding<0, storage_buffer>,
+//     #hal.descriptor_set.binding<1, storage_buffer>
+//   ]>
+// ]>
+// #map = affine_map<(d0, d1, d2, d3) -> (d0, d1, d3)>
+// #map1 = affine_map<(d0, d1, d2, d3) -> (d0, d3, d2)>
+// #map2 = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2)>
+// #encoding_unset = #iree_encoding.encoding<operand_index = 2, op_type = matmul, element_types = [f32, f32, f32], original_type = tensor<128x80x320xf32>, user_indexing_maps = [#map, #map1, #map2], round_dims_to = array<i64: 16, 16, 16>>
+// func.func @unset_encoding_128x80x320_batch_matmul_RESULT() attributes {
+//    hal.executable.target = #hal.executable.target<"xyz", "xyz", {target_triple="x86_64-xyz-xyz", cpu_features="+avx,+avx2,+fma"}>
+// } {
+//   %c0 = arith.constant 0 : index
+//   %0 = hal.interface.constant.load layout(#pipeline_layout) ordinal(0) : i32
+//   %3 = arith.index_castui %0 : i32 to index
+//   %6 = hal.interface.binding.subspan layout(#pipeline_layout) set(0) binding(1) alignment(64) offset(%c0) : !flow.dispatch.tensor<writeonly:tensor<128x80x320xf32>>
+//   %9 = hal.interface.binding.subspan layout(#pipeline_layout) set(0) binding(0) alignment(64) offset(%3) flags(ReadOnly) : !flow.dispatch.tensor<readonly:tensor<128x80x320xf32, #encoding_unset>>
+//   %10 = flow.dispatch.tensor.load %9, offsets = [0, 0, 0], sizes = [128, 80, 320], strides = [1, 1, 1]
+//       : !flow.dispatch.tensor<readonly:tensor<128x80x320xf32, #encoding_unset>>
+//       -> tensor<128x80x320xf32, #encoding_unset>
+//   %11 = iree_encoding.unset_encoding %10 : tensor<128x80x320xf32, #encoding_unset> -> tensor<128x80x320xf32>
+//   flow.dispatch.tensor.store %11, %6, offsets = [0, 0, 0], sizes = [128, 80, 320], strides = [1, 1, 1] : tensor<128x80x320xf32> -> !flow.dispatch.tensor<writeonly:tensor<128x80x320xf32>>
+//   return
+// }
