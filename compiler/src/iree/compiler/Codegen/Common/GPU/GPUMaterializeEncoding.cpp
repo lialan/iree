@@ -404,9 +404,7 @@ struct GPUUnsetEncodingOpLoweringConversion
     assert(unsetTransposeResultDims.size() == 6);
 
     // transpose -> collapse_shape -> unpack
-    auto unpackSourceShape = unPackOp->getSourceType();
-    size_t targetRank = unpackSourceShape.getRank();
-
+    size_t targetRank = unsetEncodingOp.getResultType().getRank();
 
     SmallVector<int64_t> unsetTransposePerm;
     unsetTransposePerm.push_back(0);
