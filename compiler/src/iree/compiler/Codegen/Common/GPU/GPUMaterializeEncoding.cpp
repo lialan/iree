@@ -434,10 +434,9 @@ struct GPUUnsetEncodingOpLoweringConversion
         getReassociationIndicesForReshape(transposeResultType,
                                           unPackOp->getSourceType());
     assert(collapseReassoc.has_value());
-    auto collaposeShapeOp = rewriter.create<tensor::CollapseShapeOp>(
-        loc, unsetEncodingOp.getSourceType(), transposeOp->getResult(0), *collapseReassoc);
-
-    unPackOp->setOperand(0, collaposeShapeOp.getResult());
+    auto collapseShapeOp = rewriter.create<tensor::CollapseShapeOp>(
+        loc, unPackOp->getSourceType(), transposeOp->getResult(0), *collapseReassoc);
+    unPackOp->setOperand(0, collapseShapeOp.getResult());
     rewriter.replaceOp(unsetEncodingOp, unPackOp->getResult());
     return success();
   }
