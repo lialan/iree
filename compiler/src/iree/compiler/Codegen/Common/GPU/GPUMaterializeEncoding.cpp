@@ -366,9 +366,8 @@ struct GPUUnsetEncodingOpLoweringConversion
     }
     
     // before emitting code to unset encoding, 
-    /*
     FailureOr<MaterializeEncodingInfo> maybeEncodingInfo =
-        converter->getEncodingInfo(unsetEncodingOp.getResultType());
+        converter->getEncodingInfo(unsetEncodingOp.getSource().getType());
     if (failed(maybeEncodingInfo)) {
       return rewriter.notifyMatchFailure(unsetEncodingOp,
                                          "unhandled result encoding");
@@ -376,7 +375,6 @@ struct GPUUnsetEncodingOpLoweringConversion
     SmallVector<int64_t> innerTiles = maybeEncodingInfo->innerTileSizes;
     SmallVector<int64_t> intrinsicVectorShape =
         maybeEncodingInfo->innerTileShapes;
-    */
 
     rewriter.replaceOp(unsetEncodingOp, unPackOp->getResult());
     return success();
