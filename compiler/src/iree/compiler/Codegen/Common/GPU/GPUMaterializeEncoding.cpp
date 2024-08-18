@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Tensor/Transforms/Transforms.h"
 #include "mlir/Dialect/Utils/IndexingUtils.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
+#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -62,7 +63,7 @@ static SmallVector<int64_t> getIntrinsicVectorSize(IREE::GPU::MMAAttr mma,
 
 // Given encoding's role index and element types, return the transpose
 // permutation used in GPU materialization.
-static SmallVector<int64_t> getTransposePermutation(IREE::GPU::MMAAttr mma,
+static SmallVector<int64_t> getEncodingTransposePerm(IREE::GPU::MMAAttr mma,
                                                     int64_t roleIdx) {
   // TODO: Support other intrinsics.
   if (mma.getIntrinsic().getValue() !=
@@ -196,7 +197,7 @@ materializeEncodingForTarget(RankedTensorType tensorType,
   // insert inner tile shapes and permutation info
   auto roleIdx = encoding.getOperandIndex().getInt();
   auto intrinsicVectorSizes = getIntrinsicVectorSize(*mma, roleIdx);
-  auto permutation = getTransposePermutation(*mma, roleIdx);
+  auto permutation = getEncodingTransposePerm(*mma, roleIdx);
   encodingInfo.innerTileShapes = intrinsicVectorSizes;
   encodingInfo.permutation = permutation;
   return encodingInfo;
@@ -364,7 +365,9 @@ struct GPUUnsetEncodingOpLoweringConversion
       rewriter.replaceOp(unsetEncodingOp, result);
       return success();
     }
-    
+
+    Location loc = unsetEncodingOp.getLoc();
+
     // before emitting code to unset encoding, 
     FailureOr<MaterializeEncodingInfo> maybeEncodingInfo =
         converter->getEncodingInfo(unsetEncodingOp.getSource().getType());
@@ -376,6 +379,49 @@ struct GPUUnsetEncodingOpLoweringConversion
     SmallVector<int64_t> intrinsicVectorShape =
         maybeEncodingInfo->innerTileShapes;
 
+
+    
+    // transpose -> collapse_shape -> unpack
+    auto unpackSourceShape = unPackOp->getSourceType();
+    size_t targetRank = unpackSourceShape.getRank();
+
+
+    SmallVector<int64_t> unsetTransposeResultDims; // TODO: calculate this
+    SmallVector<int64_t> unsetTransposePerm;
+    unsetTransposePerm.push_back(0);
+    unsetTransposePerm.push_back(1);
+    for (auto perm : invertPermutationVector(maybeEncodingInfo->permutation)) {
+      unsetTransposePerm.push_back(targetRank + perm);
+    }
+    applyPermutationToVector(unsetTransposeResultDims, unsetTransposePerm);
+
+    SmallVector<int64_t> transposeResultDims; // TODO: add to this
+    auto emptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, transposeResultDims, unsetEncodingOp.getSourceType().getElementType());
+    auto transposeOp = rewriter.create<linalg::TransposeOp>(
+        loc,unPackOp->getSource(), emptyTensor, unsetTransposePerm);
+    
+
+    // collapse to this shape
+    /*
+    auto intermediateShapeType =
+        RankedTensorType::get(intermediateShape, elemType);
+    std::optional<SmallVector<ReassociationIndices>> collapseReassoc =
+        getReassociationIndicesForReshape(srcType, intermediateShapeType);
+    assert(collapseReassoc.has_value());
+    auto collapseShapeOp = rewriter.create<tensor::CollapseShapeOp>(
+        loc, intermediateShapeType, src, *collapseReassoc);
+    */
+    auto transposeResultType = RankedTensorType::get(
+        transposeResultDims, unsetEncodingOp.getSourceType().getElementType());
+    std::optional<SmallVector<ReassociationIndices>> collapseReassoc =
+        getReassociationIndicesForReshape(transposeResultType,
+                                          unsetEncodingOp.getResultType());
+    assert(collapseReassoc.has_value());
+    auto collaposeShapeOp = rewriter.create<tensor::CollapseShapeOp>(
+        loc, unsetEncodingOp.getSourceType(), transposeOp->getResult(0), *collapseReassoc);
+
+    unPackOp->setOperand(0, collaposeShapeOp.getResult());
     rewriter.replaceOp(unsetEncodingOp, unPackOp->getResult());
     return success();
   }
