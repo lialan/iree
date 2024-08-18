@@ -422,18 +422,17 @@ struct GPUUnsetEncodingOpLoweringConversion
         reshapeForInnerDims(rewriter, unPackOp->getSource(),
                             unsetTransposeType, unPackOp->getDestRank());
 
-    SmallVector<int64_t> transposeResultDims; // TODO: add to this
     auto emptyTensor = rewriter.create<tensor::EmptyOp>(
-        loc, transposeResultDims, unsetEncodingOp.getSourceType().getElementType());
+        loc, unsetTransposeResultDims, unsetEncodingOp.getSourceType().getElementType());
     auto transposeOp = rewriter.create<linalg::TransposeOp>(
         loc, transposeSource, emptyTensor, unsetTransposePerm);
     
     // collapse to this shape
     auto transposeResultType = RankedTensorType::get(
-        transposeResultDims, unsetEncodingOp.getSourceType().getElementType());
+        unsetTransposeResultDims, unsetEncodingOp.getSourceType().getElementType());
     std::optional<SmallVector<ReassociationIndices>> collapseReassoc =
         getReassociationIndicesForReshape(transposeResultType,
-                                          unsetEncodingOp.getResultType());
+                                          unPackOp->getSourceType());
     assert(collapseReassoc.has_value());
     auto collaposeShapeOp = rewriter.create<tensor::CollapseShapeOp>(
         loc, unsetEncodingOp.getSourceType(), transposeOp->getResult(0), *collapseReassoc);
