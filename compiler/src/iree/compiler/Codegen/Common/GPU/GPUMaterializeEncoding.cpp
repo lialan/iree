@@ -393,43 +393,48 @@ struct GPUUnsetEncodingOpLoweringConversion
     // collapse 6D -> 4D
     // unpack 4D -> 2D
 
-    // Calculate a 6D data tiling result:
+    rewriter.setInsertionPoint(*unPackOp);
+
+    // Transpose result type:
     auto sourceShape = unPackOp->getSourceType().getShape();
     auto iT1 = intrinsicVectorShape[0];
     auto iT2 = intrinsicVectorShape[1];
     auto oT1 = sourceShape[2] / iT1;
     auto oT2 = sourceShape[3] / iT2;
-    SmallVector<int64_t> unsetTransposeResultDims = {
+    SmallVector<int64_t> transposeSourceDims = {
         sourceShape[0], sourceShape[1], oT1, iT1, oT2, iT2};
-    assert(unsetTransposeResultDims.size() == 6);
+    assert(transposeSourceDims.size() == 6);
 
-    // transpose -> collapse_shape -> unpack
+    // unpackOP's result rank
     size_t targetRank = unsetEncodingOp.getResultType().getRank();
 
-    SmallVector<int64_t> unsetTransposePerm;
-    unsetTransposePerm.push_back(0);
-    unsetTransposePerm.push_back(1);
-    for (auto perm : invertPermutationVector(maybeEncodingInfo->permutation)) {
-      unsetTransposePerm.push_back(targetRank + perm);
+    auto encodingInfoPerm = maybeEncodingInfo->permutation;
+    auto invertedPerm = invertPermutationVector(encodingInfoPerm);
+    SmallVector<int64_t> transposePerm;
+    transposePerm.push_back(0);
+    transposePerm.push_back(1);
+    for (auto perm : encodingInfoPerm) {
+      transposePerm.push_back(targetRank + perm);
     }
-    SmallVector<int64_t> unsetTransposeSourceDims = unsetTransposeResultDims;
-    applyPermutationToVector(unsetTransposeSourceDims, unsetTransposePerm);
-    auto unsetTransposeType = RankedTensorType::get(
-        unsetTransposeSourceDims, unPackOp->getSourceType().getElementType());
+    SmallVector<int64_t> expandShapeResultDims = transposeSourceDims;
+    applyPermutationToVector(expandShapeResultDims, transposePerm);
 
-    // intermediate type is transpose's input type
-    tensor::ExpandShapeOp transposeSource = 
+    auto expandShapeResultType = RankedTensorType::get(
+        expandShapeResultDims, unPackOp->getSourceType().getElementType());
+
+    tensor::ExpandShapeOp expandShapeOp = 
         reshapeForInnerDims(rewriter, unPackOp->getSource(),
-                            unsetTransposeType, unPackOp->getDestRank());
+                            expandShapeResultType, unPackOp->getDestRank());
 
     auto emptyTensor = rewriter.create<tensor::EmptyOp>(
-        loc, unsetTransposeResultDims, unsetEncodingOp.getSourceType().getElementType());
+        loc, transposeSourceDims, unsetEncodingOp.getSourceType().getElementType());
+    transposePerm = invertPermutationVector(transposePerm);
     auto transposeOp = rewriter.create<linalg::TransposeOp>(
-        loc, transposeSource, emptyTensor, unsetTransposePerm);
+        loc, expandShapeOp, emptyTensor, transposePerm);
     
     // collapse to this shape
     auto transposeResultType = RankedTensorType::get(
-        unsetTransposeResultDims, unsetEncodingOp.getSourceType().getElementType());
+        transposeSourceDims, unsetEncodingOp.getSourceType().getElementType());
     std::optional<SmallVector<ReassociationIndices>> collapseReassoc =
         getReassociationIndicesForReshape(transposeResultType,
                                           unPackOp->getSourceType());
