@@ -24,6 +24,19 @@ module {
     return
   }
 }
+
+module {
+  func.func @test_col_major_mfma_f16_16x16x16_f32() attributes {
+      mma_types = #iree_gpu.mma_layout<MFMA_F32_16x16x16_F16, col_major = true>} {
+    return
+  }
+}
+// CHECK-LABEL: func @test_col_major_mfma_f16_16x16x16_f32
+//  CHECK-SAME:   mma_types = #iree_gpu.mma_layout<MFMA_F32_16x16x16_F16, col_major = true>
+
+module {
+  func.func @test_wmma_f16_16x16x16_f32() attributes {
+      mma_types = #iree_gpu.mma_layout<WMMA_F32_16x16x16_F16>} {
 // CHECK-LABEL: func @test_WMMAR3_f16_16x16x16_f32
 //  CHECK-SAME:   mma_types = #iree_gpu.mma_layout<WMMAR3_F32_16x16x16_F16>
 
